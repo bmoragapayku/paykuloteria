@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Lotería digital — Mi cartón</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  :root{
+    --paper: #f3ecd9;
+    --paper-line: #e2d5b3;
+    --maroon: #8b5cf6;
+    --maroon-deep: #170b2c;
+    --gold: #c9a6ff;
+    --magenta: #e879f9;
+    --grad: linear-gradient(90deg, #9b5cf6, #d946ef);
+    --grad-text: linear-gradient(180deg, #f6f0ff 0%, #cdaaff 55%, #e879f9 100%);
+    --ink: #2b2416;
+    --mist: #8a7f66;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{
+    margin:0; min-height:100%;
+    background: var(--maroon-deep);
+    font-family:'Space Grotesk', sans-serif;
+    color: var(--ink);
+  }
+  .num-font{ font-family:'Fraunces', serif; font-variation-settings:'opsz' 60; }
+  .screen{ min-height:100dvh; display:flex; flex-direction:column; }
+  .hidden{ display:none !important; }
+
+  .brandbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 18px; background: var(--maroon-deep);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .brandbar img{ height:20px; display:block; }
+  .brandbar .flag-chip{
+    display:flex; align-items:center; gap:6px;
+    font-size:12px; color:#f3ecd9; background:rgba(255,255,255,0.09);
+    padding:6px 12px; border-radius:999px; white-space:nowrap;
+  }
+
+  /* ---------- Pantalla: unirse ---------- */
+  #joinScreen{
+    flex:1; display:flex; flex-direction:column; justify-content:center;
+    padding: 32px 26px; gap:18px; color:#f3ecd9;
+  }
+  #joinScreen h1{ font-size:28px; margin:0 0 4px; font-weight:600; }
+  #joinScreen h1 b{ color: var(--gold); }
+  #joinScreen p{ margin:0 0 10px; color:#d8c9a8; font-size:14px; }
+  #joinScreen input{
+    padding: 14px 16px; border-radius: 12px; border:none; font-size:16px;
+    background: #f3ecd9; color: var(--ink);
+  }
+  #joinScreen button{
+    padding:15px; border-radius:12px; border:none; background: var(--grad);
+    color:#fff; font-size:16px; font-weight:600; margin-top:6px;
+  }
+  #joinError{ color:#ffb3b3; font-size:13px; min-height:16px; }
+
+  /* ---------- Pantalla: elegir cartón ---------- */
+  #pickScreen{ flex:1; display:flex; flex-direction:column; }
+  .pick-header{ background: var(--maroon-deep); color:#f3ecd9; padding: 18px 20px; text-align:center; }
+  .pick-header .pick-title{ font-size:20px; font-weight:600; }
+  .pick-header .pick-sub{ font-size:12px; color:#d8c9a8; margin-top:4px; }
+
+  .pick-body{
+    flex:1; background: var(--paper); border-radius: 22px 22px 0 0;
+    padding: 18px 14px 20px; display:flex; flex-direction:column; gap:16px; min-height:0;
+  }
+  .pick-grid{
+    display:grid; grid-template-columns: repeat(6, 1fr); gap:8px;
+    max-height: 30vh; overflow-y:auto; padding:4px;
+  }
+  .pick-badge{
+    aspect-ratio:1; border-radius:10px; border:none;
+    font-family:'Space Grotesk',sans-serif; font-size:13px; font-weight:600;
+    background:#fffaf0; color:var(--ink); cursor:pointer;
+  }
+  .pick-badge.taken{ background:#d8cbb0; color:#a89878; }
+  .pick-badge.selected{ outline:3px solid var(--maroon); background:var(--grad); color:#fff; }
+
+  .pick-preview{ display:flex; flex-direction:column; gap:8px; }
+  .preview-label{ font-size:13px; color:var(--mist); font-weight:600; }
+
+  .pick-actions{ display:flex; gap:10px; margin-top:auto; }
+  .btn-ghost-paper{
+    flex:1; padding:14px; border-radius:12px; border:1px solid var(--paper-line);
+    background:transparent; color:var(--ink); font-weight:600; font-size:14px;
+  }
+  .btn-primary-paper{
+    flex:1; padding:14px; border-radius:12px; border:none;
+    background: var(--maroon); color:#f3ecd9; font-weight:600; font-size:14px;
+  }
+  .btn-primary-paper:disabled{ opacity:0.4; }
+
+  /* ---------- Pantalla: juego ---------- */
+  #gameScreen{ flex:1; display:flex; flex-direction:column; }
+  .top-banner{
+    background: var(--maroon-deep); color:#f3ecd9;
+    padding: 16px 20px 20px; text-align:center;
+  }
+  .top-banner .label{ font-size:12px; color:#d8c9a8; letter-spacing:0.5px; }
+  .top-banner .big-number{
+    font-size:56px; line-height:1.1;
+    background: var(--grad-text); -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .top-banner .sub{ font-size:12px; color:#c8b78f; }
+  .history-strip{
+    display:flex; gap:6px; overflow-x:auto; padding: 0 20px 14px; background: var(--maroon-deep);
+  }
+  .history-strip span{
+    flex:0 0 auto; width:26px; height:26px; border-radius:50%;
+    background: rgba(255,255,255,0.12); color:#f3ecd9;
+    display:flex; align-items:center; justify-content:center; font-size:11px;
+  }
+
+  .card-wrap{ flex:1; background: var(--paper); border-radius: 22px 22px 0 0; padding: 20px 14px 30px; }
+  .card-header{ display:flex; justify-content:space-between; align-items:center; padding: 0 6px 14px; }
+  .card-header .name{ font-weight:600; font-size:15px; }
+  .card-header .room{ font-size:12px; color: var(--mist); }
+
+  .carton{
+    display:grid;
+    grid-template-columns: repeat(9, 1fr);
+    gap: 5px;
+    background: var(--paper-line);
+    padding: 6px;
+    border-radius: 14px;
+  }
+  .cell{
+    aspect-ratio: 1;
+    display:flex; align-items:center; justify-content:center;
+    border-radius: 7px;
+    font-size: clamp(15px, 5vw, 21px);
+    font-weight: 600;
+    background: #fffaf0;
+    color: var(--ink);
+    position: relative;
+    user-select: none;
+  }
+  .cell.blank{ background: var(--maroon); }
+  .cell.playable{ cursor:pointer; }
+  .cell.marked{
+    background: var(--maroon);
+    color: #fff;
+  }
+  .cell.marked::after{
+    content:'';
+    position:absolute; inset: 5%;
+    border-radius: 50%;
+    border: 2px solid var(--magenta);
+  }
+  .cell.shake{ animation: shake .3s; }
+  @keyframes shake{
+    25%{ transform: translateX(-4px);} 75%{ transform: translateX(4px);}
+  }
+  .cell.attention{ animation: cellAttention .5s ease-in-out 2; }
+  @keyframes cellAttention{
+    0%, 100%{ background:#fffaf0; box-shadow:none; }
+    50%{ background: var(--magenta); box-shadow: 0 0 0 6px rgba(232,121,249,0.45); }
+  }
+
+  .status-strip{
+    display:flex; justify-content:space-between; margin-top:16px; padding:0 6px;
+    font-size:12px; color: var(--mist);
+  }
+
+  #toast{
+    position: fixed; left:50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
+    background: var(--ink); color:#f3ecd9; padding: 14px 22px; border-radius: 30px;
+    font-size:14px; opacity:0; transition: all .25s ease; pointer-events:none;
+    text-align:center; max-width: 86%;
+  }
+  #toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="screen">
+<div class="brandbar">
+    <img src="data:image/png;base64,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" alt="Payku" />
+    <div class="flag-chip">🇨🇱 Fiestas Patrias</div>
+  </div>
+
+  <div id="joinScreen">
+    <h1>Lotería <b>digital</b></h1>
+    <p>Ingresa tu nombre para recibir tu cartón.</p>
+    <input id="roomInput" placeholder="Código de sala (ej. K7QT)" maxlength="4" autocapitalize="characters" />
+    <input id="nameInput" placeholder="Tu nombre" maxlength="24" />
+    <div id="joinError"></div>
+    <button id="joinBtn">Unirme a la sala</button>
+  </div>
+
+  <div id="pickScreen" class="hidden">
+    <div class="pick-header">
+      <div class="pick-title">Elige tu cartón</div>
+      <div class="pick-sub"><span id="cardsAvailableTag">0</span> disponibles de <span id="cardsTotalTag">0</span></div>
+    </div>
+    <div class="pick-body">
+      <div class="pick-grid hidden" id="pickGrid"></div>
+      <div class="pick-preview">
+        <div class="preview-label">Cartón <span id="previewIdTag">—</span></div>
+        <div class="carton" id="previewCarton"></div>
+      </div>
+      <div class="pick-actions">
+        <button id="shuffleBtn" class="btn-ghost-paper" type="button">🔀 Otro cartón</button>
+        <button id="confirmCardBtn" class="btn-primary-paper" type="button" disabled>Confirmar cartón</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="gameScreen" class="hidden">
+    <div class="top-banner">
+      <div class="label">Último número cantado</div>
+      <div class="big-number num-font" id="lastNumber">—</div>
+      <div class="sub">Toca ese número en tu cartón para marcarlo</div>
+    </div>
+    <div class="history-strip" id="historyStrip"></div>
+
+    <div class="card-wrap">
+      <div class="card-header">
+        <div class="name" id="playerNameTag"></div>
+        <div class="room">Sala <span id="roomTag"></span></div>
+      </div>
+      <div class="carton" id="carton"></div>
+      <div class="status-strip">
+        <span id="markedStatus">0/15 marcados</span>
+        <span id="patternStatus"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const socket = io();
+let myCard = null;
+let drawnNumbers = [];
+let allCardsById = {};      // id -> grid
+let cardsStatusById = {};   // id -> { taken, takenByName }
+let candidateId = null;     // cartón que se está previsualizando (aún no confirmado)
+
+const params = new URLSearchParams(location.search);
+const roomFromUrl = (params.get('room') || '').toUpperCase();
+if (roomFromUrl) document.getElementById('roomInput').value = roomFromUrl;
+
+function showToast(msg, ms = 2600) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(showToast._h);
+  showToast._h = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+// ---------- Sesión persistente (para no perder el cartón al refrescar) ----------
+const CLIENT_ID_KEY = 'loteriaDigital:clientId';
+const SESSION_KEY = 'loteriaDigital:session';
+
+function getClientId() {
+  let id = localStorage.getItem(CLIENT_ID_KEY);
+  if (!id) {
+    id = (crypto.randomUUID ? crypto.randomUUID() : `c-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    localStorage.setItem(CLIENT_ID_KEY, id);
+  }
+  return id;
+}
+const CLIENT_ID = getClientId();
+
+function saveSession(roomCode, name) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ roomCode, name }));
+}
+function loadSession() {
+  try {
+    return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+function clearSession() {
+  localStorage.removeItem(SESSION_KEY);
+}
+
+function showScreen(id) {
+  ['joinScreen', 'pickScreen', 'gameScreen'].forEach((s) => {
+    document.getElementById(s).classList.toggle('hidden', s !== id);
+  });
+}
+
+// Aplica en el DOM las celdas que el jugador ya tenía marcadas (al recuperar
+// la sesión tras un refresh), sin depender de haber hecho click en ellas.
+function applyMarkedCells(markedKeys) {
+  markedKeys.forEach((key) => {
+    const [row, col] = key.split('-').map(Number);
+    const cellEl = document.querySelector(`#carton .cell[data-row="${row}"][data-col="${col}"]`);
+    cellEl?.classList.add('marked');
+  });
+  const totalPlayable = myCard ? myCard.flat().filter((v) => v != null).length : 15;
+  document.getElementById('markedStatus').textContent = `${markedKeys.length}/${totalPlayable} marcados`;
+}
+
+// Al cargar la página, si había una sesión guardada, intenta recuperarla
+// automáticamente en vez de mostrar la pantalla de "unirme" desde cero.
+(function attemptRejoin() {
+  const session = loadSession();
+  if (!session?.roomCode) return; // primera vez en este navegador: pantalla normal de unirse
+
+  socket.emit('player:rejoin', { roomCode: session.roomCode, clientId: CLIENT_ID }, (res) => {
+    if (!res?.ok) {
+      clearSession();
+      return; // se queda en joinScreen, que ya está visible por defecto
+    }
+
+    drawnNumbers = res.drawnNumbers || [];
+    document.getElementById('playerNameTag').textContent = res.name;
+    document.getElementById('roomTag').textContent = res.roomCode;
+    renderHistory();
+
+    if (res.cardId != null && res.card) {
+      // Ya tenía cartón confirmado: vuelve directo al juego, con sus marcas.
+      myCard = res.card;
+      showScreen('gameScreen');
+      renderCard();
+      applyMarkedCells(res.marked || []);
+    } else {
+      // Se había quedado eligiendo cartón: vuelve a esa pantalla.
+      allCardsById = {};
+      (res.cards || []).forEach((c) => { allCardsById[c.id] = c.grid; });
+      cardsStatusById = {};
+      (res.cardsStatus || []).forEach((c) => { cardsStatusById[c.id] = c; });
+      showScreen('pickScreen');
+      pickRandomCandidate();
+    }
+  });
+})();
+
+document.getElementById('joinBtn').addEventListener('click', () => {
+  const roomCode = document.getElementById('roomInput').value.trim().toUpperCase();
+  const name = document.getElementById('nameInput').value.trim();
+  const errorBox = document.getElementById('joinError');
+  errorBox.textContent = '';
+
+  if (!roomCode) return (errorBox.textContent = 'Ingresa el código de sala.');
+  if (!name) return (errorBox.textContent = 'Ingresa tu nombre.');
+
+  socket.emit('player:join', { roomCode, name, clientId: CLIENT_ID }, (res) => {
+    if (!res.ok) {
+      errorBox.textContent = res.reason === 'room-not-found'
+        ? 'No existe esa sala. Revisa el código.'
+        : 'No se pudo unir. Intenta de nuevo.';
+      return;
+    }
+    saveSession(res.roomCode, res.name);
+    drawnNumbers = res.drawnNumbers || [];
+    document.getElementById('playerNameTag').textContent = res.name;
+    document.getElementById('roomTag').textContent = res.roomCode;
+
+    allCardsById = {};
+    res.cards.forEach((c) => { allCardsById[c.id] = c.grid; });
+    cardsStatusById = {};
+    res.cardsStatus.forEach((c) => { cardsStatusById[c.id] = c; });
+
+    showScreen('pickScreen');
+    renderHistory();
+    pickRandomCandidate();
+  });
+});
+
+// ---------- Selección de cartón ----------
+function renderPickGrid() {
+  const grid = document.getElementById('pickGrid');
+  const ids = Object.keys(allCardsById).map(Number).sort((a, b) => a - b);
+  document.getElementById('cardsTotalTag').textContent = ids.length;
+  document.getElementById('cardsAvailableTag').textContent =
+    ids.filter((id) => !cardsStatusById[id]?.taken).length;
+
+  grid.innerHTML = '';
+  ids.forEach((id) => {
+    const status = cardsStatusById[id] || { taken: false };
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = id;
+    btn.className = 'pick-badge'
+      + (status.taken ? ' taken' : '')
+      + (id === candidateId ? ' selected' : '');
+    btn.addEventListener('click', () => onPickCard(id));
+    grid.appendChild(btn);
+  });
+}
+
+function onPickCard(id) {
+  const status = cardsStatusById[id];
+  if (status?.taken) {
+    showToast(`Este cartón ya lo eligió ${status.takenByName} 😛`);
+    return;
+  }
+  candidateId = id;
+  renderPreview();
+  renderPickGrid();
+}
+
+function renderPreview() {
+  document.getElementById('previewIdTag').textContent = candidateId ?? '—';
+  const el = document.getElementById('previewCarton');
+  el.innerHTML = '';
+  const grid = allCardsById[candidateId];
+  document.getElementById('confirmCardBtn').disabled = !grid;
+  if (!grid) return;
+
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 9; col++) {
+      const value = grid[row][col];
+      const cell = document.createElement('div');
+      cell.className = value == null ? 'cell blank' : 'cell';
+      if (value != null) cell.textContent = value;
+      el.appendChild(cell);
+    }
+  }
+}
+
+function pickRandomCandidate() {
+  const available = Object.keys(allCardsById).map(Number)
+    .filter((id) => !cardsStatusById[id]?.taken);
+  candidateId = available.length
+    ? available[Math.floor(Math.random() * available.length)]
+    : null;
+  if (!available.length) showToast('No quedan cartones disponibles en esta sala.');
+  renderPreview();
+  renderPickGrid();
+}
+
+document.getElementById('shuffleBtn').addEventListener('click', pickRandomCandidate);
+
+document.getElementById('confirmCardBtn').addEventListener('click', () => {
+  if (candidateId == null) return;
+  socket.emit('player:confirm-card', { cardId: candidateId }, (res) => {
+    if (!res.ok) {
+      if (res.reason === 'taken') {
+        cardsStatusById[candidateId] = { taken: true, takenByName: res.takenByName };
+        showToast(`Este cartón ya lo eligió ${res.takenByName} 😛`);
+        candidateId = null;
+        renderPreview();
+        renderPickGrid();
+      } else {
+        showToast('No se pudo confirmar el cartón, prueba otro.');
+      }
+      return;
+    }
+    myCard = res.card;
+    showScreen('gameScreen');
+    renderCard();
+  });
+});
+
+function renderCard() {
+  const el = document.getElementById('carton');
+  el.innerHTML = '';
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 9; col++) {
+      const value = myCard[row][col];
+      const cell = document.createElement('div');
+      cell.dataset.row = row;
+      cell.dataset.col = col;
+      if (value == null) {
+        cell.className = 'cell blank';
+      } else {
+        cell.className = 'cell playable';
+        cell.textContent = value;
+        cell.addEventListener('click', () => onCellClick(row, col, cell));
+      }
+      el.appendChild(cell);
+    }
+  }
+}
+
+function renderHistory() {
+  const strip = document.getElementById('historyStrip');
+  strip.innerHTML = '';
+  drawnNumbers.slice(-12).forEach((n) => {
+    const s = document.createElement('span');
+    s.textContent = n;
+    strip.appendChild(s);
+  });
+  const last = drawnNumbers[drawnNumbers.length - 1];
+  document.getElementById('lastNumber').textContent = last ?? '—';
+}
+
+function onCellClick(row, col, cellEl) {
+  socket.emit('player:mark', { row, col }, (res) => {
+    if (!res.ok) {
+      if (res.reason === 'not-drawn') {
+        cellEl.classList.add('shake');
+        setTimeout(() => cellEl.classList.remove('shake'), 300);
+        showToast('Ese número todavía no ha salido.');
+      }
+      return;
+    }
+    const key = `${row}-${col}`;
+    const isMarked = res.marked.includes(key);
+    cellEl.classList.toggle('marked', isMarked);
+    const totalPlayable = myCard.flat().filter((v) => v != null).length;
+    document.getElementById('markedStatus').textContent = `${res.marked.length}/${totalPlayable} marcados`;
+  });
+}
+
+socket.on('game:number-drawn', ({ number, history }) => {
+  drawnNumbers = history;
+  renderHistory();
+  scheduleAttentionBlink(number);
+});
+
+// Si el número cantado está en mi cartón y a los 3s todavía no lo he marcado,
+// la celda parpadea 2 veces para llamar la atención.
+function scheduleAttentionBlink(number) {
+  if (!myCard) return;
+  let target = null;
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 9; col++) {
+      if (myCard[row][col] === number) target = { row, col };
+    }
+  }
+  if (!target) return;
+
+  setTimeout(() => {
+    const cellEl = document.querySelector(
+      `#carton .cell[data-row="${target.row}"][data-col="${target.col}"]`
+    );
+    if (!cellEl || cellEl.classList.contains('marked')) return;
+    cellEl.classList.add('attention');
+    setTimeout(() => cellEl.classList.remove('attention'), 1000);
+  }, 3000);
+}
+
+// Mantiene el catálogo de cartones al día en tiempo real mientras se elige
+// (así ves de inmediato cuando otro jugador confirma un cartón).
+socket.on('room:state', (room) => {
+  if (!room.cards || document.getElementById('pickScreen').classList.contains('hidden')) return;
+
+  room.cards.forEach((c) => { cardsStatusById[c.id] = { taken: c.taken, takenByName: c.takenByName }; });
+
+  if (candidateId != null && cardsStatusById[candidateId]?.taken) {
+    showToast(`Este cartón ya lo eligió ${cardsStatusById[candidateId].takenByName} 😛`);
+    candidateId = null;
+    renderPreview();
+  }
+  renderPickGrid();
+});
+
+socket.on('game:win', ({ name, pattern }) => {
+  const myName = document.getElementById('playerNameTag').textContent;
+  if (name !== myName) return;
+  const label = pattern === 'terna' ? '¡Hiciste Terna!' : pattern === 'linea' ? '¡Hiciste Línea!' : '¡CARTÓN LLENO!';
+  document.getElementById('patternStatus').textContent = label;
+  showToast(label, 4000);
+});
+</script>
+</body>
+</html>
