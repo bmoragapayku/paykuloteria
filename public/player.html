@@ -303,9 +303,13 @@ function applyMarkedCells(markedKeys) {
   document.getElementById('markedStatus').textContent = `${markedKeys.length}/${totalPlayable} marcados`;
 }
 
-// Al cargar la página, si había una sesión guardada, intenta recuperarla
-// automáticamente en vez de mostrar la pantalla de "unirme" desde cero.
-(function attemptRejoin() {
+// Corre en CADA conexión del socket, no solo la primera: un corte de red
+// breve (WiFi que titubea, el celular cambiando de red, la pestaña en
+// segundo plano) hace que Socket.IO reconecte solo con un socket.id
+// nuevo — sin este handshake, el servidor deja de reconocer al jugador
+// (aunque la página nunca se haya refrescado) y marcar números deja de
+// funcionar en silencio.
+function attemptRejoin() {
   const session = loadSession();
   if (!session?.roomCode) return; // primera vez en este navegador: pantalla normal de unirse
 
@@ -336,7 +340,8 @@ function applyMarkedCells(markedKeys) {
       pickRandomCandidate();
     }
   });
-})();
+}
+socket.on('connect', attemptRejoin);
 
 document.getElementById('joinBtn').addEventListener('click', () => {
   const roomCode = document.getElementById('roomInput').value.trim().toUpperCase();

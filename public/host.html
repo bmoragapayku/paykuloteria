@@ -253,6 +253,10 @@
       <div id="roomCodeBig"></div>
       <div id="qrHolder"></div>
       <div id="joinUrl"></div>
+      <div class="flag-chip" id="lobbyPlayerCount" style="margin-top:18px; display:inline-flex;">0 jugadores conectados</div>
+      <div>
+        <button class="btn-primary" id="continueToGameBtn" style="margin-top:18px;">Continuar a la partida</button>
+      </div>
     </div>
   </div>
 
@@ -383,9 +387,13 @@ function restoreAutoplayButton(autoplay) {
   btn.classList.toggle('active', autoplay);
 }
 
-// Al cargar la página, si este navegador ya tenía una sala como host,
-// intenta recuperarla automáticamente en vez de mostrar el lobby de nuevo.
-(function attemptHostRejoin() {
+// Corre en CADA conexión del socket, no solo la primera: un corte de red
+// breve (WiFi que titubea, el celular cambiando de red, la pestaña en
+// segundo plano) hace que Socket.IO reconecte solo con un socket.id
+// nuevo — sin este handshake, el servidor deja de reconocer al host
+// (aunque la página nunca se haya refrescado) y "Cantar número" se queda
+// sin hacer nada.
+function attemptHostRejoin() {
   const session = loadHostSession();
   if (!session?.roomCode) return; // primera vez: lobby normal
 
@@ -399,7 +407,8 @@ function restoreAutoplayButton(autoplay) {
     restoreAutoplayButton(res.room.autoplay);
     applyRoomState(res.room);
   });
-})();
+}
+socket.on('connect', attemptHostRejoin);
 
 document.getElementById('createRoomBtn').addEventListener('click', () => {
   const cardCount = Number(document.getElementById('cardCountSelect').value);
@@ -413,14 +422,18 @@ document.getElementById('createRoomBtn').addEventListener('click', () => {
     document.getElementById('joinUrl').textContent = joinUrl;
     document.getElementById('qrHolder').innerHTML = '';
     new QRCode(document.getElementById('qrHolder'), { text: joinUrl, width: 220, height: 220 });
+
+    // Se queda mostrando el QR y el código hasta que el host decida seguir
+    // (la gente necesita tiempo real para escanear, no un par de segundos).
+    document.getElementById('lobbySetup').classList.add('hidden');
     document.getElementById('lobbyRoomBox').classList.remove('hidden');
     document.getElementById('roomCodeTag').textContent = roomCode;
-
-    // Tras 1.4s pasa a la vista completa de juego (deja tiempo para ver el QR grande primero,
-    // pero también se puede empezar a jugar de inmediato con "Cantar número")
-    document.getElementById('lobby').classList.add('hidden');
-    document.getElementById('game').classList.remove('hidden');
   });
+});
+
+document.getElementById('continueToGameBtn').addEventListener('click', () => {
+  document.getElementById('lobby').classList.add('hidden');
+  document.getElementById('game').classList.remove('hidden');
 });
 
 document.getElementById('drawBtn').addEventListener('click', () => {
@@ -460,6 +473,10 @@ socket.on('game:number-drawn', ({ number, history }) => {
 
 function applyRoomState(room) {
   document.getElementById('playerCount').textContent = room.players.length;
+  const lobbyCountTag = document.getElementById('lobbyPlayerCount');
+  if (lobbyCountTag) {
+    lobbyCountTag.textContent = `${room.players.length} jugador${room.players.length === 1 ? '' : 'es'} conectado${room.players.length === 1 ? '' : 's'}`;
+  }
   const takenCount = room.cards.filter((c) => c.taken).length;
   document.getElementById('cardsTakenTag').textContent = `${takenCount}/${room.cards.length}`;
   const list = document.getElementById('playersList');
