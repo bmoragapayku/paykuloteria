@@ -199,6 +199,7 @@
     <div class="pick-header">
       <div class="pick-title">Elige tu cartón</div>
       <div class="pick-sub"><span id="cardsAvailableTag">0</span> disponibles de <span id="cardsTotalTag">0</span></div>
+      <div class="pick-sub" id="pickLastNumberRow" style="margin-top:6px;"></div>
     </div>
     <div class="pick-body">
       <div class="pick-grid hidden" id="pickGrid"></div>
@@ -458,6 +459,7 @@ document.getElementById('confirmCardBtn').addEventListener('click', () => {
     myCard = res.card;
     showScreen('gameScreen');
     renderCard();
+    renderHistory(); // refleja de inmediato los números que ya habían salido mientras elegías cartón
   });
 });
 
@@ -492,6 +494,13 @@ function renderHistory() {
   });
   const last = drawnNumbers[drawnNumbers.length - 1];
   document.getElementById('lastNumber').textContent = last ?? '—';
+
+  // También se ve mientras todavía se está eligiendo cartón, para que nunca
+  // haya un tramo ciego sin saber qué números ya salieron.
+  const pickLastRow = document.getElementById('pickLastNumberRow');
+  if (pickLastRow) {
+    pickLastRow.textContent = last != null ? `Último número cantado: ${last}` : '';
+  }
 }
 
 function onCellClick(row, col, cellEl) {
