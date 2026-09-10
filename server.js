@@ -5,6 +5,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const { GameManager } = require('./lib/gameManager');
+const roomStore = require('./lib/roomStore');
 
 const PORT = process.env.PORT || 3000;
 const AUTOPLAY_INTERVAL_MS = 6000;
@@ -17,7 +18,7 @@ const HOST_RECONNECT_GRACE_MS = 60000;
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-const games = new GameManager();
+const games = new GameManager(roomStore);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -57,13 +58,17 @@ function drawAndBroadcast(io, room) {
     number: drawn,
     history: room.drawnNumbers,
   });
+  games.markDirty(room.code);
 }
 
 io.on('connection', (socket) => {
   // ---------- HOST ----------
   socket.on('host:create', ({ cardCount, clientId } = {}, cb) => {
     const safeClientId = clientId ? String(clientId).slice(0, 64) : null;
-    const room = games.createRoom(socket.id, cardCount, safeClientId);
+    if (!safeClientId) return cb?.({ ok: false, reason: 'no-client-id' });
+
+    const room = games.createRoom(safeClientId, cardCount);
+    room.attachHostSocket(safeClientId, socket.id);
     socket.join(room.code);
     socket.data.role = 'host';
     socket.data.roomCode = room.code;
@@ -71,12 +76,13 @@ io.on('connection', (socket) => {
     cb?.({ ok: true, room: roomPublicState(room) });
   });
 
-  // Reconexión del host tras un refresh: recupera la sala tal cual estaba
-  // (números cantados, jugadores, cartones tomados, autoplay) sin resetear nada.
+  // Reconexión del host: tras un refresh, un corte de wifi, o incluso un
+  // reinicio del servidor (la sala se recupera desde disco), vuelve tal
+  // cual estaba — números cantados, jugadores, cartones tomados, autoplay.
   socket.on('host:rejoin', ({ roomCode, clientId } = {}, cb) => {
     const room = games.getRoom(roomCode);
     if (!room) return cb?.({ ok: false, reason: 'room-not-found' });
-    if (!room.reclaimHost(clientId, socket.id)) {
+    if (!room.attachHostSocket(clientId, socket.id)) {
       return cb?.({ ok: false, reason: 'not-host' });
     }
     socket.join(room.code);
@@ -123,9 +129,12 @@ io.on('connection', (socket) => {
     const room = games.getRoom(roomCode);
     if (!room) return cb?.({ ok: false, reason: 'room-not-found' });
 
-    const safeName = (name || 'Jugador').toString().trim().slice(0, 24) || 'Jugador';
     const safeClientId = clientId ? String(clientId).slice(0, 64) : null;
-    room.addPlayer(socket.id, safeName, safeClientId);
+    if (!safeClientId) return cb?.({ ok: false, reason: 'no-client-id' });
+
+    const safeName = (name || 'Jugador').toString().trim().slice(0, 24) || 'Jugador';
+    room.addPlayer(safeClientId, safeName);
+    room.attachPlayerSocket(safeClientId, socket.id);
     socket.join(room.code);
     socket.data.role = 'player';
     socket.data.roomCode = room.code;
@@ -141,17 +150,19 @@ io.on('connection', (socket) => {
       cardsStatus: room.cardsSummary(),
     });
     io.to(room.code).emit('room:state', roomPublicState(room));
+    games.markDirty(room.code);
   });
 
-  // Reconexión tras un refresh: el navegador manda su clientId persistente
-  // y recupera exactamente donde estaba (cartón, marcas, sala) sin pasar
-  // de nuevo por la pantalla de "unirme".
+  // Reconexión tras un refresh, un corte de wifi, o un reinicio del
+  // servidor: el navegador manda su clientId persistente y recupera
+  // exactamente donde estaba (cartón, marcas, sala) sin pasar de nuevo por
+  // la pantalla de "unirme".
   socket.on('player:rejoin', ({ roomCode, clientId } = {}, cb) => {
     const room = games.getRoom(roomCode);
     if (!room) return cb?.({ ok: false, reason: 'room-not-found' });
     if (!clientId) return cb?.({ ok: false, reason: 'no-client-id' });
 
-    const player = room.reclaimPlayer(clientId, socket.id);
+    const player = room.attachPlayerSocket(clientId, socket.id);
     if (!player) return cb?.({ ok: false, reason: 'no-session' });
 
     socket.join(room.code);
@@ -179,10 +190,11 @@ io.on('connection', (socket) => {
     const room = games.getRoom(socket.data.roomCode);
     if (!room) return cb?.({ ok: false, reason: 'room-not-found' });
 
-    const result = room.claimCard(socket.id, Number(cardId));
+    const result = room.claimCard(socket.data.clientId, Number(cardId));
     cb?.(result);
     if (result.ok) {
       io.to(room.code).emit('room:state', roomPublicState(room));
+      games.markDirty(room.code);
     }
   });
 
@@ -190,7 +202,7 @@ io.on('connection', (socket) => {
     const room = games.getRoom(socket.data.roomCode);
     if (!room) return cb?.({ ok: false, reason: 'room-not-found' });
 
-    const result = room.markCell(socket.id, row, col);
+    const result = room.markCell(socket.data.clientId, row, col);
     if (!result.ok) return cb?.(result);
 
     cb?.({ ok: true, marked: Array.from(result.player.marked) });
@@ -198,7 +210,7 @@ io.on('connection', (socket) => {
     if (result.wins.length > 0) {
       result.wins.forEach((win) => {
         io.to(room.code).emit('game:win', {
-          playerId: result.player.id,
+          playerId: result.player.clientId,
           name: result.player.name,
           pattern: win.pattern, // 'terna' | 'linea' | 'carton'
           row: win.row,
@@ -206,6 +218,7 @@ io.on('connection', (socket) => {
       });
     }
     io.to(room.code).emit('room:state', roomPublicState(room));
+    games.markDirty(room.code);
   });
 
   // ---------- DESCONEXIÓN ----------
@@ -220,16 +233,22 @@ io.on('connection', (socket) => {
         games.deleteRoom(room.code);
         io.to(room.code).emit('room:host-left');
       });
-    } else if (socket.data.role === 'player') {
+    } else if (socket.data.role === 'player' && socket.data.clientId) {
       // No lo saca de inmediato: le da un margen para reconectar (por
       // ejemplo, si solo refrescó la página) antes de liberar su cartón.
-      room.scheduleRemoval(socket.id, socket.data.clientId, RECONNECT_GRACE_MS, () => {
+      room.scheduleRemoval(socket.data.clientId, RECONNECT_GRACE_MS, () => {
         io.to(room.code).emit('room:state', roomPublicState(room));
+        games.markDirty(room.code);
       });
     }
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Lotería digital corriendo en http://localhost:${PORT}`);
-});
+async function start() {
+  await games.loadFromStore();
+  server.listen(PORT, () => {
+    console.log(`Lotería digital corriendo en http://localhost:${PORT}`);
+  });
+}
+
+start();
