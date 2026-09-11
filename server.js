@@ -208,11 +208,27 @@ io.on('connection', (socket) => {
     if (!room) return cb?.({ ok: false, reason: 'room-not-found' });
 
     const result = room.claimCard(socket.data.clientId, Number(cardId));
-    cb?.(result);
-    if (result.ok) {
-      io.to(room.code).emit('room:state', roomPublicState(room));
-      games.markDirty(room.code);
+    if (!result.ok) return cb?.(result);
+
+    // Si entra atrasado (ya hay números cantados), marca de una los que
+    // ya salieron y le tocan en el cartón recién confirmado — no debería
+    // tener que ponerse a marcar a mano lo que ya sonó antes de que llegara.
+    const autoMark = room.autoMarkDrawnNumbers(socket.data.clientId);
+
+    cb?.({ ...result, marked: Array.from(autoMark.player.marked) });
+
+    if (autoMark.wins.length > 0) {
+      autoMark.wins.forEach((win) => {
+        io.to(room.code).emit('game:win', {
+          playerId: autoMark.player.clientId,
+          name: autoMark.player.name,
+          pattern: win.pattern,
+          row: win.row,
+        });
+      });
     }
+    io.to(room.code).emit('room:state', roomPublicState(room));
+    games.markDirty(room.code);
   });
 
   socket.on('player:mark', ({ row, col } = {}, cb) => {

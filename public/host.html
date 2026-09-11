@@ -213,6 +213,26 @@
   #winOverlay .pattern{ color: var(--violet-soft); font-size:20px; margin-bottom:10px; }
   #winOverlay .name{ font-size: 46px; font-weight:600; }
   #winOverlay .btn-primary{ margin-top:28px; }
+
+  /* Modal de QR reutilizable durante la partida, para que lleguen rezagados */
+  #qrModal{
+    position: fixed; inset:0; display:flex;
+    align-items:center; justify-content:center;
+    background: rgba(10,10,16,0.88);
+    z-index: 55;
+  }
+  .qr-modal-card{
+    background: linear-gradient(160deg, #2a1550, #180a2c);
+    border: 2px solid var(--violet);
+    border-radius: 26px;
+    padding: 40px 54px;
+    text-align:center;
+    box-shadow: 0 0 60px rgba(232,121,249,0.25);
+  }
+  .qr-modal-card .room-label{ font-size:18px; color: var(--violet-soft); }
+  .qr-modal-card .room-label b{ color: var(--ivory); letter-spacing:8px; }
+  #qrModalHolder{ background:#fff; padding:20px; border-radius:20px; margin:20px auto; display:inline-block; }
+  .qr-modal-card .url{ color: var(--mist); font-size:13px; margin-bottom:26px; max-width:420px; word-break:break-all; }
   .confetti-layer{
     position:absolute; inset:0; overflow:hidden; pointer-events:none; z-index:1;
   }
@@ -299,6 +319,7 @@
     <footer>
       <button class="btn-primary" id="drawBtn">Cantar número</button>
       <button class="btn-ghost" id="autoplayBtn">Autoplay: off</button>
+      <button class="btn-ghost" id="qrBtn">Mostrar QR</button>
       <button class="btn-ghost" id="resetBtn">Reiniciar sala</button>
     </footer>
   </div>
@@ -309,6 +330,15 @@
       <div class="pattern" id="winPattern"></div>
       <div class="name" id="winName"></div>
       <button class="btn-primary" id="winCloseBtn" type="button">Cerrar</button>
+    </div>
+  </div>
+
+  <div id="qrModal" class="hidden">
+    <div class="qr-modal-card">
+      <div class="room-label">Sala <b id="qrModalRoomCode"></b></div>
+      <div id="qrModalHolder"></div>
+      <div class="url" id="qrModalUrl"></div>
+      <button class="btn-primary" id="qrModalCloseBtn" type="button">Cerrar</button>
     </div>
   </div>
 
@@ -370,8 +400,11 @@ for (let n = 1; n <= 90; n++) {
   boardGrid.appendChild(cell);
 }
 
+let currentJoinUrl = '';
+
 function goToGame(code) {
   roomCode = code;
+  currentJoinUrl = `${location.origin}/player.html?room=${roomCode}`;
   document.getElementById('roomCodeTag').textContent = roomCode;
   document.getElementById('lobby').classList.add('hidden');
   document.getElementById('game').classList.remove('hidden');
@@ -430,12 +463,12 @@ document.getElementById('createRoomBtn').addEventListener('click', () => {
     if (!res.ok) return;
     roomCode = res.room.code;
     saveHostSession(roomCode);
-    const joinUrl = `${location.origin}/player.html?room=${roomCode}`;
+    currentJoinUrl = `${location.origin}/player.html?room=${roomCode}`;
 
     document.getElementById('roomCodeBig').textContent = roomCode;
-    document.getElementById('joinUrl').textContent = joinUrl;
+    document.getElementById('joinUrl').textContent = currentJoinUrl;
     document.getElementById('qrHolder').innerHTML = '';
-    new QRCode(document.getElementById('qrHolder'), { text: joinUrl, width: 220, height: 220 });
+    new QRCode(document.getElementById('qrHolder'), { text: currentJoinUrl, width: 380, height: 380 });
 
     // Se queda mostrando el QR y el código hasta que el host decida seguir
     // (la gente necesita tiempo real para escanear, no un par de segundos).
@@ -446,8 +479,7 @@ document.getElementById('createRoomBtn').addEventListener('click', () => {
 });
 
 document.getElementById('continueToGameBtn').addEventListener('click', () => {
-  document.getElementById('lobby').classList.add('hidden');
-  document.getElementById('game').classList.remove('hidden');
+  goToGame(roomCode);
 });
 
 document.getElementById('drawBtn').addEventListener('click', () => {
@@ -464,6 +496,18 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   if (!confirm('¿Reiniciar y cerrar esta sala?')) return;
   clearHostSession();
   socket.emit('host:reset', {}, () => location.reload());
+});
+
+document.getElementById('qrBtn').addEventListener('click', () => {
+  if (!currentJoinUrl) return;
+  document.getElementById('qrModalRoomCode').textContent = roomCode;
+  document.getElementById('qrModalUrl').textContent = currentJoinUrl;
+  document.getElementById('qrModalHolder').innerHTML = '';
+  new QRCode(document.getElementById('qrModalHolder'), { text: currentJoinUrl, width: 420, height: 420 });
+  document.getElementById('qrModal').classList.remove('hidden');
+});
+document.getElementById('qrModalCloseBtn').addEventListener('click', () => {
+  document.getElementById('qrModal').classList.add('hidden');
 });
 
 socket.on('game:number-drawn', ({ number, history }) => {

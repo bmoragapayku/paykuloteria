@@ -109,20 +109,22 @@
     background: var(--grad-text); -webkit-background-clip: text; background-clip: text; color: transparent;
   }
   .top-banner .sub{ font-size:12px; color:#c8b78f; }
-  .history-strip{
-    display:flex; gap:6px; overflow-x:auto; padding: 0 20px 14px; background: var(--maroon-deep);
-  }
-  .history-strip span{
-    flex:0 0 auto; width:26px; height:26px; border-radius:50%;
-    background: rgba(255,255,255,0.12); color:#f3ecd9;
-    display:flex; align-items:center; justify-content:center; font-size:11px;
-  }
 
   .card-wrap{ flex:1; background: var(--paper); border-radius: 22px 22px 0 0; padding: 20px 14px 30px; }
   .card-header{ display:flex; justify-content:space-between; align-items:center; padding: 0 6px 14px; gap:10px; }
   .card-header .name{ font-weight:600; font-size:15px; }
   .card-header .cardnum{ font-size:12px; color: var(--maroon); font-weight:700; }
   .card-header .room{ font-size:12px; color: var(--mist); }
+
+  /* Lista completa de números cantados, siempre visible debajo del cartón */
+  .numbers-log{ margin-top:20px; padding-top:16px; border-top:1px dashed var(--paper-line); }
+  .numbers-log-title{ font-size:12px; color: var(--mist); text-align:center; margin-bottom:10px; }
+  .numbers-log-grid{ display:flex; flex-wrap:wrap; gap:6px; justify-content:center; }
+  .numbers-log-grid span{
+    width:26px; height:26px; border-radius:50%;
+    background: var(--maroon); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:600;
+  }
 
   .carton{
     display:grid;
@@ -177,6 +179,18 @@
     text-align:center; max-width: 86%;
   }
   #toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+
+  /* Modal de premio (sin decir quién ganó, solo aviso general) */
+  #winModal{
+    position: fixed; inset:0; z-index:60;
+    display:flex; align-items:center; justify-content:center;
+    background: rgba(20,8,8,0.6);
+  }
+  .win-modal-card{
+    background: var(--paper); border-radius:22px; padding:38px 30px;
+    text-align:center; max-width:84%; box-shadow: 0 24px 60px rgba(0,0,0,0.4);
+  }
+  .win-modal-title{ font-size:21px; font-weight:700; color: var(--maroon); margin-bottom:22px; line-height:1.4; }
 </style>
 </head>
 <body>
@@ -221,7 +235,6 @@
       <div class="big-number num-font" id="lastNumber">—</div>
       <div class="sub">Toca ese número en tu cartón para marcarlo</div>
     </div>
-    <div class="history-strip" id="historyStrip"></div>
 
     <div class="card-wrap">
       <div class="card-header">
@@ -234,11 +247,22 @@
         <span id="markedStatus">0/15 marcados</span>
         <span id="patternStatus"></span>
       </div>
+      <div class="numbers-log">
+        <div class="numbers-log-title">Números cantados</div>
+        <div class="numbers-log-grid" id="historyStrip"></div>
+      </div>
     </div>
   </div>
 </div>
 
 <div id="toast"></div>
+
+<div id="winModal" class="hidden">
+  <div class="win-modal-card">
+    <div class="win-modal-title" id="winModalTitle"></div>
+    <button class="btn-primary-paper" id="winModalCloseBtn" type="button">Cerrar</button>
+  </div>
+</div>
 
 <script>
 const socket = io();
@@ -500,6 +524,7 @@ document.getElementById('confirmCardBtn').addEventListener('click', () => {
     document.getElementById('myCardIdTag').textContent = res.cardId;
     showScreen('gameScreen');
     renderCard();
+    applyMarkedCells(res.marked || []); // si entró atrasado, marca de una los números que ya habían salido
     renderHistory(); // refleja de inmediato los números que ya habían salido mientras elegías cartón
   });
 });
@@ -528,9 +553,10 @@ function renderCard() {
 function renderHistory() {
   const strip = document.getElementById('historyStrip');
   strip.innerHTML = '';
-  drawnNumbers.slice(-12).forEach((n) => {
+  drawnNumbers.forEach((n, i) => {
     const s = document.createElement('span');
     s.textContent = n;
+    if (i === drawnNumbers.length - 1) s.style.outline = '2px solid var(--magenta)';
     strip.appendChild(s);
   });
   const last = drawnNumbers[drawnNumbers.length - 1];
@@ -605,12 +631,33 @@ socket.on('room:state', (room) => {
   renderPickGrid();
 });
 
+const WIN_LABELS = {
+  terna: '🎉 ¡Alguien hizo Terna!',
+  linea: '🎉 ¡Alguien hizo Línea!',
+  carton: '🏆 ¡CARTÓN LLENO! Alguien ganó',
+};
+
+function showWinModal(pattern) {
+  document.getElementById('winModalTitle').textContent = WIN_LABELS[pattern] || '🎉 ¡Alguien ganó un premio!';
+  document.getElementById('winModal').classList.remove('hidden');
+  clearTimeout(showWinModal._autoClose);
+  showWinModal._autoClose = setTimeout(closeWinModal, 6000);
+}
+function closeWinModal() {
+  document.getElementById('winModal').classList.add('hidden');
+}
+document.getElementById('winModalCloseBtn').addEventListener('click', closeWinModal);
+
 socket.on('game:win', ({ name, pattern }) => {
+  // Modal general para todos: avisa que alguien ganó, sin decir quién.
+  showWinModal(pattern);
+
+  // Además, si el que ganó fui yo, un toast personal (solo lo veo yo).
   const myName = document.getElementById('playerNameTag').textContent;
-  if (name !== myName) return;
-  const label = pattern === 'terna' ? '¡Hiciste Terna!' : pattern === 'linea' ? '¡Hiciste Línea!' : '¡CARTÓN LLENO!';
-  document.getElementById('patternStatus').textContent = label;
-  showToast(label, 4000);
+  if (name === myName) {
+    const label = pattern === 'terna' ? '¡Hiciste Terna!' : pattern === 'linea' ? '¡Hiciste Línea!' : '¡CARTÓN LLENO!';
+    document.getElementById('patternStatus').textContent = label;
+  }
 });
 </script>
 </body>
