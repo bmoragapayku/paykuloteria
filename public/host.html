@@ -318,6 +318,20 @@ let roomCode = null;
 
 const PATTERN_LABEL = { terna: '¡Hizo Terna!', linea: '¡Hizo Línea!', carton: '¡CARTÓN LLENO!' };
 
+// Si la pestaña pierde el foco un rato (se cambia de ventana/app) y la
+// conexión queda muerta, al volver forzamos la reconexión de inmediato.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !socket.connected) {
+    socket.connect();
+  }
+});
+
+setInterval(() => {
+  if (document.visibilityState === 'visible' && !socket.connected) {
+    socket.connect();
+  }
+}, 5000);
+
 // ---------- Sesión persistente (para no perder la sala al refrescar) ----------
 const HOST_CLIENT_ID_KEY = 'loteriaDigitalHost:clientId';
 const HOST_SESSION_KEY = 'loteriaDigitalHost:session';

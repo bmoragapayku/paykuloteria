@@ -119,8 +119,9 @@
   }
 
   .card-wrap{ flex:1; background: var(--paper); border-radius: 22px 22px 0 0; padding: 20px 14px 30px; }
-  .card-header{ display:flex; justify-content:space-between; align-items:center; padding: 0 6px 14px; }
+  .card-header{ display:flex; justify-content:space-between; align-items:center; padding: 0 6px 14px; gap:10px; }
   .card-header .name{ font-weight:600; font-size:15px; }
+  .card-header .cardnum{ font-size:12px; color: var(--maroon); font-weight:700; }
   .card-header .room{ font-size:12px; color: var(--mist); }
 
   .carton{
@@ -225,6 +226,7 @@
     <div class="card-wrap">
       <div class="card-header">
         <div class="name" id="playerNameTag"></div>
+        <div class="cardnum">Cartón <span id="myCardIdTag">—</span></div>
         <div class="room">Sala <span id="roomTag"></span></div>
       </div>
       <div class="carton" id="carton"></div>
@@ -257,6 +259,26 @@ function showToast(msg, ms = 2600) {
   clearTimeout(showToast._h);
   showToast._h = setTimeout(() => t.classList.remove('show'), ms);
 }
+
+// En celulares, cuando la pantalla se bloquea o se cambia de app, el
+// navegador puede pausar la pestaña y la conexión en tiempo real queda
+// muerta sin que el propio navegador reconecte solo al volver — la
+// pantalla se ve normal pero no reacciona a nada. Al volver a primer
+// plano, forzamos la reconexión de inmediato en vez de esperarla.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !socket.connected) {
+    showToast('Reconectando…', 4000);
+    socket.connect();
+  }
+});
+
+// Red de respaldo: si por lo que sea 'visibilitychange' no disparó en este
+// navegador, este chequeo periódico igual detecta la desconexión y reconecta.
+setInterval(() => {
+  if (document.visibilityState === 'visible' && !socket.connected) {
+    socket.connect();
+  }
+}, 5000);
 
 // ---------- Sesión persistente (para no perder el cartón al refrescar) ----------
 const CLIENT_ID_KEY = 'loteriaDigital:clientId';
@@ -328,6 +350,7 @@ function attemptRejoin() {
     if (res.cardId != null && res.card) {
       // Ya tenía cartón confirmado: vuelve directo al juego, con sus marcas.
       myCard = res.card;
+      document.getElementById('myCardIdTag').textContent = res.cardId;
       showScreen('gameScreen');
       renderCard();
       applyMarkedCells(res.marked || []);
@@ -338,7 +361,7 @@ function attemptRejoin() {
       cardsStatusById = {};
       (res.cardsStatus || []).forEach((c) => { cardsStatusById[c.id] = c; });
       showScreen('pickScreen');
-      pickRandomCandidate();
+      pickNextCandidate();
     }
   });
 }
@@ -372,7 +395,7 @@ document.getElementById('joinBtn').addEventListener('click', () => {
 
     showScreen('pickScreen');
     renderHistory();
-    pickRandomCandidate();
+    pickNextCandidate();
   });
 });
 
@@ -428,18 +451,35 @@ function renderPreview() {
   }
 }
 
-function pickRandomCandidate() {
-  const available = Object.keys(allCardsById).map(Number)
-    .filter((id) => !cardsStatusById[id]?.taken);
-  candidateId = available.length
-    ? available[Math.floor(Math.random() * available.length)]
-    : null;
-  if (!available.length) showToast('No quedan cartones disponibles en esta sala.');
+// Recorre los cartones disponibles en orden numérico (no al azar): la
+// primera vez cae en el más bajo disponible, y cada click en "Otro cartón"
+// avanza al siguiente (dando la vuelta al llegar al final). Los cartones
+// ya tomados nunca aparecen como candidatos.
+function pickNextCandidate() {
+  const available = Object.keys(allCardsById)
+    .map(Number)
+    .filter((id) => !cardsStatusById[id]?.taken)
+    .sort((a, b) => a - b);
+
+  if (!available.length) {
+    candidateId = null;
+    showToast('No quedan cartones disponibles en esta sala.');
+    renderPreview();
+    renderPickGrid();
+    return;
+  }
+
+  if (candidateId == null) {
+    candidateId = available[0];
+  } else {
+    const idx = available.indexOf(candidateId);
+    candidateId = available[idx === -1 ? 0 : (idx + 1) % available.length];
+  }
   renderPreview();
   renderPickGrid();
 }
 
-document.getElementById('shuffleBtn').addEventListener('click', pickRandomCandidate);
+document.getElementById('shuffleBtn').addEventListener('click', pickNextCandidate);
 
 document.getElementById('confirmCardBtn').addEventListener('click', () => {
   if (candidateId == null) return;
@@ -457,6 +497,7 @@ document.getElementById('confirmCardBtn').addEventListener('click', () => {
       return;
     }
     myCard = res.card;
+    document.getElementById('myCardIdTag').textContent = res.cardId;
     showScreen('gameScreen');
     renderCard();
     renderHistory(); // refleja de inmediato los números que ya habían salido mientras elegías cartón

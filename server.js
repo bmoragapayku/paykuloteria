@@ -9,11 +9,10 @@ const roomStore = require('./lib/roomStore');
 
 const PORT = process.env.PORT || 3000;
 const AUTOPLAY_INTERVAL_MS = 6000;
-// Cuánto tiempo se le guarda el cartón a un jugador que se desconecta
-// (por ejemplo, al refrescar la página) antes de liberarlo de verdad.
-const RECONNECT_GRACE_MS = 30000;
-// Igual, pero para el host: si refresca, la sala sigue viva esperándolo.
-const HOST_RECONNECT_GRACE_MS = 60000;
+// El cartón de un jugador (y la sala misma) NUNCA se libera solo por
+// desconexión, sin importar cuánto tiempo pase — refresh, WiFi que
+// titubea, el celular que se bloquea o se apaga. La única forma de que un
+// cartón vuelva a estar disponible es que el host apriete "Reiniciar sala".
 
 const app = express();
 const server = http.createServer(app);
@@ -165,6 +164,12 @@ io.on('connection', (socket) => {
     const player = room.attachPlayerSocket(clientId, socket.id);
     if (!player) return cb?.({ ok: false, reason: 'no-session' });
 
+    // Si ya tenía cartón, marca solo los números que salieron mientras
+    // estaba desconectado — así no tiene que re-marcarlos uno por uno.
+    const autoMark = player.cardId != null
+      ? room.autoMarkDrawnNumbers(clientId)
+      : { wins: [] };
+
     socket.join(room.code);
     socket.data.role = 'player';
     socket.data.roomCode = room.code;
@@ -177,12 +182,24 @@ io.on('connection', (socket) => {
       drawnNumbers: room.drawnNumbers,
       cardId: player.cardId,
       card: player.card,
-      marked: Array.from(player.marked),
+      marked: Array.from(player.marked), // ya incluye lo que se acaba de auto-marcar
       cardsStatus: room.cardsSummary(),
       // Si aún no había confirmado cartón, le mandamos el catálogo completo
       // para que siga eligiendo justo donde se quedó.
       cards: player.cardId == null ? room.cardsWithGrids() : undefined,
     });
+
+    if (autoMark.wins.length > 0) {
+      autoMark.wins.forEach((win) => {
+        io.to(room.code).emit('game:win', {
+          playerId: player.clientId,
+          name: player.name,
+          pattern: win.pattern,
+          row: win.row,
+        });
+      });
+      games.markDirty(room.code);
+    }
     io.to(room.code).emit('room:state', roomPublicState(room));
   });
 
@@ -227,19 +244,16 @@ io.on('connection', (socket) => {
     if (!room) return;
 
     if (socket.data.role === 'host' && room.hostSocketId === socket.id) {
-      // No cierra la sala de inmediato: le da margen al host para reconectar
-      // (por ejemplo, tras un refresh) antes de terminar la partida de verdad.
-      room.scheduleHostRemoval(HOST_RECONNECT_GRACE_MS, () => {
-        games.deleteRoom(room.code);
-        io.to(room.code).emit('room:host-left');
-      });
+      // No cierra la sala: solo la marca como "host desconectado". La
+      // partida sigue viva y el host puede volver en cualquier momento.
+      room.markHostDisconnected(socket.id);
+      io.to(room.code).emit('room:state', roomPublicState(room));
     } else if (socket.data.role === 'player' && socket.data.clientId) {
-      // No lo saca de inmediato: le da un margen para reconectar (por
-      // ejemplo, si solo refrescó la página) antes de liberar su cartón.
-      room.scheduleRemoval(socket.data.clientId, RECONNECT_GRACE_MS, () => {
-        io.to(room.code).emit('room:state', roomPublicState(room));
-        games.markDirty(room.code);
-      });
+      // No le suelta el cartón: solo lo marca como desconectado para que
+      // el host vea su estado. Puede volver cuando quiera con el mismo
+      // cartón y las mismas marcas, sin límite de tiempo.
+      room.markPlayerDisconnected(socket.data.clientId, socket.id);
+      io.to(room.code).emit('room:state', roomPublicState(room));
     }
   });
 });
